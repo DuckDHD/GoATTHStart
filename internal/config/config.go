@@ -10,6 +10,9 @@ import (
 )
 
 type Config struct {
+	Env  string `mapstructure:"APP_ENV"`
+	Port string `mapstructure:"PORT"`
+
 	DBConfig    DBConfig    `mapstructure:",squash"`
 	CacheConfig CacheConfig `mapstructure:",squash"`
 }

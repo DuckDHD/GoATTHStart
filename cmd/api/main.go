@@ -11,10 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"GoATTHStart/internal/cache"
 	"GoATTHStart/internal/config"
 	"GoATTHStart/internal/database"
+	"GoATTHStart/internal/handlers"
 	"GoATTHStart/internal/server"
+	"GoATTHStart/internal/services"
 )
 
 func gracefulShutdown(apiServer *http.Server, done chan bool) {
@@ -58,21 +59,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	cache, err := cache.NewRedisClient(&cfg.CacheConfig)
-	if err != nil {
-		logger.Error("failed to initialize redis", "error", err)
-		os.Exit(1)
-	}
+	// cache, err := cache.NewRedisClient(&cfg.CacheConfig)
+	// if err != nil {
+	// 	logger.Error("failed to initialize redis", "error", err)
+	// 	os.Exit(1)
+	// }
 
-	server := server.NewServer()
+	healthService := services.NewHealthService(db)
+	healthHandler := handlers.NewHealthHandler(healthService, logger)
+
+	handlerStruct := &server.Handlers{Health: healthHandler}
+
+	server := server.New(cfg, logger, handlerStruct)
 
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
 
 	// Run graceful shutdown in a separate goroutine
-	go gracefulShutdown(server, done)
+	go gracefulShutdown(server.GetHTTPServer(), done)
 
-	err := server.ListenAndServe()
+	err = server.Start(context.Background())
 	if err != nil && err != http.ErrServerClosed {
 		panic(fmt.Sprintf("http server error: %s", err))
 	}

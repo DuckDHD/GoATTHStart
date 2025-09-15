@@ -9,16 +9,20 @@ import (
 	"time"
 
 	"GoATTHStart/cmd/web"
+
 	"github.com/a-h/templ"
 	"github.com/coder/websocket"
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 )
 
-func (s *Server) RegisterRoutes() http.Handler {
-	r := chi.NewRouter()
+func (s *Server) SetupRoutes() http.Handler {
+	r := s.router
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
@@ -30,7 +34,7 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.Get("/", s.HelloWorldHandler)
 
-	r.Get("/health", s.healthHandler)
+	r.Get("/health", s.handlers.Health.HealthHandler)
 
 	r.Get("/websocket", s.websocketHandler)
 
@@ -51,11 +55,6 @@ func (s *Server) HelloWorldHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatalf("error handling JSON marshal. Err: %v", err)
 	}
 
-	_, _ = w.Write(jsonResp)
-}
-
-func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	jsonResp, _ := json.Marshal(s.db.Health())
 	_, _ = w.Write(jsonResp)
 }
 

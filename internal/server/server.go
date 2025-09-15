@@ -1,39 +1,57 @@
 package server
 
 import (
-	"fmt"
+	"context"
+	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
-	"time"
 
+	"github.com/go-chi/chi/v5"
 	_ "github.com/joho/godotenv/autoload"
 
-	"GoATTHStart/internal/database"
+	"GoATTHStart/internal/config"
+	"GoATTHStart/internal/handlers"
 )
 
 type Server struct {
-	port int
-
-	db database.Service
+	router     *chi.Mux
+	logger     *slog.Logger
+	config     *config.Config
+	handlers   *Handlers
+	httpServer *http.Server
 }
 
-func NewServer() *http.Server {
-	port, _ := strconv.Atoi(os.Getenv("PORT"))
-	NewServer := &Server{
-		port: port,
+type Handlers struct {
+	Health *handlers.HealthHander
+}
 
-		db: database.New(),
+func New(cfg *config.Config, logger *slog.Logger, handlers *Handlers) *Server {
+	router := chi.NewRouter()
+
+	s := &Server{
+		config:   cfg,
+		logger:   logger,
+		router:   router,
+		handlers: handlers,
+		httpServer: &http.Server{
+			Addr:    ":" + cfg.Port,
+			Handler: router,
+		},
 	}
 
-	// Declare Server config
-	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", NewServer.port),
-		Handler:      NewServer.RegisterRoutes(),
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	}
+	s.SetupRoutes()
 
-	return server
+	return s
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) GetHTTPServer() *http.Server {
+	return s.httpServer
+}
+
+func (s *Server) Start(ctx context.Context) error {
+	s.logger.Info("Server is Quacking at port " + s.config.Port)
+	return s.httpServer.ListenAndServe()
 }
