@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"GoATTHStart/internal/cache"
+	"GoATTHStart/internal/config"
+	"GoATTHStart/internal/database"
 	"GoATTHStart/internal/server"
 )
 
@@ -38,6 +43,26 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 }
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	cfg, err := config.Load(logger)
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	db, err := database.NewDBConnexion(&cfg.DBConfig, logger)
+	if err != nil {
+		logger.Error("failed to initialize database", "error", err)
+		os.Exit(1)
+	}
+
+	cache, err := cache.NewRedisClient(&cfg.CacheConfig)
+	if err != nil {
+		logger.Error("failed to initialize redis", "error", err)
+		os.Exit(1)
+	}
 
 	server := server.NewServer()
 

@@ -1,63 +1,99 @@
 package database
 
 import (
+	"GoATTHStart/internal/config"
+
 	"context"
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
+	"log/slog"
 	"strconv"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/joho/godotenv/autoload"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 // Service represents a service that interacts with a database.
-type Service interface {
-	// Health returns a map of health status information.
-	// The keys and values in the map are service-specific.
+type DBService interface {
 	Health() map[string]string
-
-	// Close terminates the database connection.
-	// It returns an error if the connection cannot be closed.
 	Close() error
+	GetGormDB() *gorm.DB
+	GetDB() *sql.DB
+	MigrateDB() error
 }
 
 type service struct {
-	db *sql.DB
+	gormDB *gorm.DB
+	sqlDB  *sql.DB
+	logger *slog.Logger
+	config *config.Config
 }
 
-var (
-	dbname     = os.Getenv("BLUEPRINT_DB_DATABASE")
-	password   = os.Getenv("BLUEPRINT_DB_PASSWORD")
-	username   = os.Getenv("BLUEPRINT_DB_USERNAME")
-	port       = os.Getenv("BLUEPRINT_DB_PORT")
-	host       = os.Getenv("BLUEPRINT_DB_HOST")
-	dbInstance *service
-)
+var dbInstance *service
 
-func New() Service {
+func (s *service) GetGormDB() *gorm.DB {
+	return s.gormDB
+}
+
+func (s *service) GetDB() *sql.DB {
+	return s.sqlDB
+}
+
+func (s *service) MigrateDB() error {
+	return nil
+}
+
+func NewDBConnexion(cfg *config.DBConfig, logger *slog.Logger) (DBService, error) {
+
+	logger.Info("Initializing database connection...")
+
 	// Reuse Connection
 	if dbInstance != nil {
-		return dbInstance
+		logger.Info("Reusing database connection...")
+		return dbInstance, nil
 	}
 
+	// Add a timeout to the connection attempt
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// Opening a driver typically will not attempt to connect to the database.
-	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", username, password, host, port, dbname))
+	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", cfg.DBUsername, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName))
 	if err != nil {
-		// This will not be a connection error, but a DSN parse error or
-		// another initialization error.
-		log.Fatal(err)
+		slog.Error("Failed to create database handle", "error", err)
+		return nil, err
 	}
+
+	slog.Info("Pinging database...")
+	if err := db.PingContext(ctx); err != nil {
+		slog.Error("Failed to ping database", "error", err)
+		return nil, err
+	}
+
 	db.SetConnMaxLifetime(0)
 	db.SetMaxIdleConns(50)
 	db.SetMaxOpenConns(50)
 
-	dbInstance = &service{
-		db: db,
+	slog.Info("Initializing Gorm...")
+	gormDb, err := gorm.Open(mysql.New(mysql.Config{
+		Conn: db,
+	}), &gorm.Config{})
+	if err != nil {
+		slog.Error("Failed to initialize Gorm", "error", err)
+		return nil, err
 	}
-	return dbInstance
+
+	slog.Info("Database connected successfully")
+
+	dbInstance = &service{
+		gormDB: gormDb,
+		sqlDB:  db,
+	}
+
+	return dbInstance, nil
 }
 
 // Health checks the health of the database connection by pinging the database.
@@ -69,7 +105,7 @@ func (s *service) Health() map[string]string {
 	stats := make(map[string]string)
 
 	// Ping the database
-	err := s.db.PingContext(ctx)
+	err := s.sqlDB.PingContext(ctx)
 	if err != nil {
 		stats["status"] = "down"
 		stats["error"] = fmt.Sprintf("db down: %v", err)
@@ -82,7 +118,7 @@ func (s *service) Health() map[string]string {
 	stats["message"] = "It's healthy"
 
 	// Get database stats (like open connections, in use, idle, etc.)
-	dbStats := s.db.Stats()
+	dbStats := s.sqlDB.Stats()
 	stats["open_connections"] = strconv.Itoa(dbStats.OpenConnections)
 	stats["in_use"] = strconv.Itoa(dbStats.InUse)
 	stats["idle"] = strconv.Itoa(dbStats.Idle)
@@ -115,6 +151,11 @@ func (s *service) Health() map[string]string {
 // If the connection is successfully closed, it returns nil.
 // If an error occurs while closing the connection, it returns the error.
 func (s *service) Close() error {
-	log.Printf("Disconnected from database: %s", dbname)
-	return s.db.Close()
+	if s.sqlDB == nil {
+		return fmt.Errorf("db down: sql: database is closed")
+	}
+	if s.logger != nil {
+		s.logger.Info("closing database connection")
+	}
+	return s.sqlDB.Close()
 }
